@@ -9,14 +9,100 @@ INDENT = "    "
 MAX_DEEP_LEVEL = 2
 
 
+def get_map_value(value_map, key, default):
+    if key in value_map:
+        return value_map[key]
+    return default
+
+
+def simplify_object_string(obj):
+    # make single line simplification
+    if obj.class_name == "NSLayoutConstraint":
+        layout_attribute_map = {
+            "1": "Left",
+            "2": "Right",
+            "3": "Top",
+            "4": "Bottom",
+            "5": "Leading",
+            "6": "Trailing",
+            "7": "Width",
+            "8": "Height",
+            "9": "CenterX",
+            "10": "CenterY",
+            "11": "Baseline",
+            "12": "FirstBaseline",
+            "13": "LeftMargin",
+            "14": "RightMargin",
+            "15": "TopMargin",
+            "16": "BottomMargin",
+            "17": "LeadingMargin",
+            "18": "TrailingMargin",
+            "19": "CenterXWithinMargins",
+            "20": "CenterYWithinMargins"
+        }
+        first = obj.values["NSFirstItem"]
+        first_attrib = obj.values["NSFirstAttribute"]
+        if first_attrib in layout_attribute_map:
+            first_attrib = layout_attribute_map[first_attrib]
+        second = get_map_value(obj.values, "NSSecondItem", None)
+        second_attrib = get_map_value(obj.values, "NSSecondAttribute", None)
+        if second_attrib is not None and second_attrib in layout_attribute_map:
+            second_attrib = layout_attribute_map[second_attrib]
+        constant = float(get_map_value(obj.values, "NSConstant", 0.0))
+        relation = int(get_map_value(obj.values, "NSRelation", 0))
+        if relation < 0:
+            relation = "<="
+        elif relation > 0:
+            relation = ">="
+        else:
+            relation = "="
+        priority = get_map_value(obj.values, "NSPriority", 1000)
+        multiplier = get_map_value(obj.values, "NSMultiplier", 1.0)
+
+        res = first.obj.name + "." + first_attrib
+        if second:
+            res += " " + relation + " " + second.obj.name + "." + second_attrib
+            if multiplier != 1.0:
+                res += " * " + str(multiplier)
+            if constant != 0.0:
+                res += " "
+                if constant >= 0.0:
+                    res += "+"
+                res += str(constant)
+        else:
+            res += " " + relation + " " + str(constant)
+            if multiplier != 1.0:
+                res += " * " + str(multiplier)
+        if priority != 1000:
+            res += " @" + str(priority)
+        return obj.name + " { " + res + " }"
+
+    elif obj.class_name in ["UINibKeyValuePair", "UIRuntimeOutletConnection", "UIRuntimeEventConnection",
+                            "UIRuntimeOutletCollectionConnection"]:
+        res = ""
+        for key, v in obj.values.items():
+            if isinstance(v, ClassEntryWrap):
+                v = v.obj
+            if isinstance(v, ClassEntry):
+                v = "@" + v.name
+            else:
+                v = str(v)
+            if len(res):
+                res += ", "
+            res += key + "=" + v
+        return obj.name + " { " + res + " }"
+
+    return None
+
+
 class ClassEntry:
     def __init__(self, name, class_name, values):
         self.name = name
-        self.className = class_name
+        self.class_name = class_name
         self.values = values
 
     def __str__(self):
-        return self.name + ":" + self.className + "=" + str(self.values)
+        return self.name + ":" + self.class_name + "=" + str(self.values)
 
 
 class ClassEntryWrap:
@@ -33,8 +119,7 @@ class FancyHtmlHexPrinter:
         pass
 
     def dump_html_header(self):
-        header = \
-"""
+        header = """
 <html>
 <head>
 <style>
@@ -153,10 +238,10 @@ class FancyHtmlTreePrinter:
     ul.collapsibleList { position: relative; list-style: none; margin-left: 0; padding-left: 1.2em; }
     .collapsibleList li{ cursor : auto; }
     li.collapsibleList:before{ padding-right: 5px; position: absolute; left: 0;}
-    li.collapsibleListOpen{cursor : pointer;}
-    li.collapsibleListOpen:before{ content: "\\2610"; padding-right: 5px; position: absolute; left: 0; }
-    li.collapsibleListClosed{ cursor : pointer; }
-    li.collapsibleListClosed:before{content: "\\2612"; padding-right: 5px; position: absolute; left: 0; }
+    li.collapsibleListOpen{}
+    li.collapsibleListOpen:before{cursor: pointer; content: "\\2610"; padding-right: 5px; position: absolute; left: 0; }
+    li.collapsibleListClosed{}
+    li.collapsibleListClosed:before{cursor:pointer; content: "\\2612"; padding-right: 5px; position: absolute; left: 0;}
 </style>
 </head>
 
@@ -193,10 +278,11 @@ const CollapsibleLists = (function(){
   function applyTo(node, doNotRecurse){
     [].forEach.call(node.getElementsByTagName('li'), li => {
       if (!doNotRecurse || node === li.parentNode){
-        li.style.userSelect       = 'none';
-        li.style.MozUserSelect    = 'none';
-        li.style.msUserSelect     = 'none';
-        li.style.WebkitUserSelect = 'none';
+        // dkimitsa: commented out to allow text selection
+        //li.style.userSelect       = 'none';
+        //li.style.MozUserSelect    = 'none';
+        //li.style.msUserSelect     = 'none';
+        //li.style.WebkitUserSelect = 'none';
         li.addEventListener('click', handleClick.bind(null, li));
         toggle(li);
       }
@@ -209,6 +295,11 @@ const CollapsibleLists = (function(){
   // doNotRecurse - true if sub-lists should not be made collapsible
   function makeOpen(nodeId){
     li = document.getElementById(nodeId);
+    animLi = li
+    animLi.style.backgroundColor = 'yellow';
+    var t = setTimeout(function(){
+       animLi.style.backgroundColor = 'white';
+    },600);
     while (li) {
         li = li.parentNode;
         if (li.nodeName == 'LI')
@@ -220,12 +311,18 @@ const CollapsibleLists = (function(){
   //
   // node - the node for which clicks are being handled
   function handleClick(node, e){
+    // if there is any selection -- don't handle click to allow text copy 
+    if (window.getSelection().toString().length > 0)
+      return;
+
     let li = e.target;
     while (li.nodeName !== 'LI'){
       li = li.parentNode;
     }
 
     if (li === node){
+      if (e.pageX > li.getBoundingClientRect().left)  
+        return;
       toggle(node);
     }
   }
@@ -287,7 +384,7 @@ const CollapsibleLists = (function(){
         self.objOutlets = {}
         for idx in range(1, len(objects)):
             obj = self.objects[idx].obj
-            if obj.className == "UIRuntimeOutletConnection":
+            if obj.class_name == "UIRuntimeOutletConnection":
                 ref = obj.values["UISource"].obj
                 if ref not in self.objOutlets:
                     self.objOutlets[ref] = []
@@ -299,7 +396,7 @@ const CollapsibleLists = (function(){
                     self.objOutlets[ref] = []
                 if obj not in self.objOutlets[ref]:
                     self.objOutlets[ref].append(obj)
-            elif obj.className == "NSLayoutConstraint":
+            elif obj.class_name == "NSLayoutConstraint":
                 ref = obj.values["NSFirstItem"].obj
                 if ref not in self.objConstraints:
                     self.objConstraints[ref] = []
@@ -314,29 +411,8 @@ const CollapsibleLists = (function(){
                         self.objConstraints[ref].append(obj)
 
     @staticmethod
-    def simplify(obj):
-        # make single line simplification
-        if obj.className in ["NSLayoutConstraint", "UINibKeyValuePair", "UIRuntimeOutletConnection",
-                             "UIRuntimeEventConnection",
-                             "UIRuntimeOutletCollectionConnection"]:
-            res = ""
-            for key, v in obj.values.items():
-                if isinstance(v, ClassEntryWrap):
-                    v = v.obj
-                if isinstance(v, ClassEntry):
-                    v = "@" + v.name
-                else:
-                    v = str(v)
-                if len(res):
-                    res += ", "
-                res += key + "=" + v
-            return obj.name + " { " + res + " }"
-
-        return None
-
-    @staticmethod
     def build_click_code(item_name):
-        return "<a href=\"#\" onclick=\"CollapsibleLists.makeOpen('" + item_name + "'\")>@</a>"
+        return "<a href=\"#" + item_name + "\" onclick=\"CollapsibleLists.makeOpen('" + item_name + "')\">@</a>"
 
     def print_member(self, indent, level, key, v):
         if len(key):
@@ -356,7 +432,7 @@ const CollapsibleLists = (function(){
                 print >> self.out, indent + INDENT, "</ul>"
                 print >> self.out, indent, "</li>"
             else:
-                print >> self.out, indent, key + "[]"
+                print >> self.out, indent, "<li>" + key + "[]" + "</li>"
         elif isinstance(v, dict):
             if len(v):
                 print >> self.out, indent, "<li>" + key + "{"
@@ -367,15 +443,16 @@ const CollapsibleLists = (function(){
                 print >> self.out, indent + INDENT, "</ul>"
                 print >> self.out, indent, "</li>"
             else:
-                print >> self.out, indent, key + "{}"
+                print >> self.out, indent, "<li>" + key + "{}" + "</li>"
 
         elif isinstance(v, ClassEntry):
-            simplified = self.simplify(v)
+            simplified = simplify_object_string(v)
+            has_simplified_desc = simplified != None
             if not simplified:
                 # cant simplify, use name as ref
                 simplified = v.name
 
-            if v in self.objectsInStack or not len(v.values) or level > MAX_DEEP_LEVEL:
+            if has_simplified_desc or v in self.objectsInStack or not len(v.values) or level > MAX_DEEP_LEVEL:
                 print >> self.out, indent, "<li>" + key + self.build_click_code(v.name) + simplified + "</li>"
             else:
                 print >> self.out, indent, "<li>" + key + self.build_click_code(v.name) + simplified
@@ -385,16 +462,25 @@ const CollapsibleLists = (function(){
             raise Exception("Unhandled value type " + str(type(v)))
             # print indent, key + ":"
 
-    def print_object(self, indent, level, obj, print_title=True):
+    def print_object(self, indent, level, obj, print_title=True, print_id=False):
         if isinstance(obj, ClassEntryWrap):
             obj = obj.obj
 
         self.objectsInStack.add(obj)
 
+        simplified_desc = simplify_object_string(obj)
+        if simplified_desc is None:
+            simplified_desc = obj.name
+
+        # id to be inserted inside <li>
+        obj_id_text = ""
+        if print_id:
+            obj_id_text = " id='" + obj.name + "'"
+
         if len(obj.values):
             # there are members, dump them
             if print_title:
-                print >> self.out, indent, "<li id='" + obj.name + "'>" + obj.name
+                print >> self.out, indent + "<li" + obj_id_text + ">" + simplified_desc
             print >> self.out, indent + INDENT, "<ul>"
             member_indent = indent + INDENT + INDENT
             for key, v in sorted(obj.values.items()):
@@ -413,14 +499,53 @@ const CollapsibleLists = (function(){
         else:
             # empty object
             if print_title:
-                print >> self.out, indent, "<li id='" + obj.name + "'>" + obj.name + "</li>"
+                print >> self.out, indent + "<li" + obj_id_text + ">" + simplified_desc + "</li>"
 
         self.objectsInStack.remove(obj)
 
+    def dump_objects_in_type_groups(self):        # group objects by object classes
+        obj_classes = {}
+        for idx in range(1, len(self.objects)):
+            obj = self.objects[idx].obj
+
+            class_name = obj.class_name
+            if class_name == "UIClassSwapper" and "UIClassName" in obj.values:
+                class_name = obj.values["UIClassName"].obj
+            if class_name in obj_classes:
+                obj_list = obj_classes[class_name]
+            else:
+                obj_list = []
+                obj_classes[class_name] = obj_list
+            obj_list.append(obj)
+        tmp = obj_classes
+        obj_classes = OrderedDict()
+        for key in sorted(tmp.keys()):
+            obj_classes[key] = tmp[key]
+
+        print >> self.out, INDENT + "<li>@ all objects by types ["
+        print >> self.out, INDENT + "<ul>"
+
+        for k, obj_list in obj_classes.items():
+            print >> self.out, INDENT + INDENT + "<li>" + k + " ["
+            print >> self.out, INDENT + INDENT + "<ul>"
+
+            for o in obj_list:
+                self.print_object(INDENT + INDENT + INDENT, 0, o, print_id=True)
+
+            print >> self.out, INDENT + INDENT + "</ul>"
+            print >> self.out, INDENT + INDENT + "</il>"
+
+        print >> self.out, INDENT + "</ul>"
+        print >> self.out, INDENT + "</il>"
+
     def fancy_print(self):
-        # dump html header
         print >> self.out, FancyHtmlTreePrinter.HTML_HEADER
+        # print structure of xib from POV of root object
         self.print_object(INDENT, 0, self.objects[0])
+
+        # now dump all objects
+        self.dump_objects_in_type_groups()
+
         print >> self.out, FancyHtmlTreePrinter.HTML_FOOTER
 
 
@@ -428,27 +553,6 @@ class FancyTxtPrinter:
 
     def __init__(self, out=sys.stdout):
         self.out = out
-
-    @staticmethod
-    def simplify(obj):
-        # make single line simplification
-        if obj.className in ["NSLayoutConstraint", "UINibKeyValuePair", "UIRuntimeOutletConnection",
-                             "UIRuntimeEventConnection",
-                             "UIRuntimeOutletCollectionConnection"]:
-            res = ""
-            for key, v in obj.values.items():
-                if isinstance(v, ClassEntryWrap):
-                    v = v.obj
-                if isinstance(v, ClassEntry):
-                    v = "@" + v.name
-                else:
-                    v = str(v)
-                if len(res):
-                    res += ", "
-                res += key + "=" + v
-            return obj.name + " { " + res + " }"
-
-        return None
 
     def print_member(self, indent, key, v):
         if len(key):
@@ -477,7 +581,7 @@ class FancyTxtPrinter:
                 print >> self.out, indent, key + "{}"
 
         elif isinstance(v, ClassEntry):
-            simplified = self.simplify(v)
+            simplified = simplify_object_string(v)
             if simplified:
                 print >> self.out, indent, key + simplified
             else:
@@ -504,11 +608,11 @@ class FancyTxtPrinter:
         obj_classes = {}
         for idx in range(1, len(objects)):
             obj = objects[idx].obj
-            if obj.className in obj_classes:
-                obj_list = obj_classes[obj.className]
+            if obj.class_name in obj_classes:
+                obj_list = obj_classes[obj.class_name]
             else:
                 obj_list = []
-                obj_classes[obj.className] = obj_list
+                obj_classes[obj.class_name] = obj_list
             obj_list.append(obj)
         tmp = obj_classes
         obj_classes = OrderedDict()
@@ -593,16 +697,16 @@ class FancyPrinter:
 
     @staticmethod
     def optimize_single_primitive(obj):
-        if obj.className == "NSString":
+        if obj.class_name == "NSString":
             if "NS.bytes" in obj.values:
                 return obj.values["NS.bytes"]
-        elif obj.className == "NSNumber":
+        elif obj.class_name == "NSNumber":
             if len(obj.values) == 1:
                 return obj.values.values()[0]
-        elif obj.className == "UIProxyObject":
+        elif obj.class_name == "UIProxyObject":
             if len(obj.values) == 1 and "UIProxiedObjectIdentifier" in obj.values:
                 return "proxy: " + obj.values["UIProxiedObjectIdentifier"].obj
-        elif obj.className == "NSArray" or obj.className == "NSMutableArray":
+        elif obj.class_name == "NSArray" or obj.class_name == "NSMutableArray":
             res = []
             for key, v in obj.values.items():
                 if key == "NSInlinedValue":
@@ -613,7 +717,7 @@ class FancyPrinter:
                     break
                 res.append(v)
             return res
-        elif obj.className == "NSDictionary" or obj.className == "NSMutableDictionary":
+        elif obj.class_name == "NSDictionary" or obj.class_name == "NSMutableDictionary":
             res = OrderedDict()
             idx = 0
             dict_items = obj.values.items()
@@ -644,7 +748,7 @@ class FancyPrinter:
         for wrap in objects:
             obj = wrap.obj
             optimized = None
-            if obj.className in allowed:
+            if obj.class_name in allowed:
                 optimized = FancyPrinter.optimize_single_primitive(obj)
             if optimized is not None:
                 # replace and don't add it to list (e.g. remove)
@@ -656,7 +760,7 @@ class FancyPrinter:
     @staticmethod
     def optimize_class_swappers(objects, used_names):
         for o in objects:
-            if o.obj.className == "UIClassSwapper" and "UIClassName" in o.obj.values:
+            if o.obj.class_name == "UIClassSwapper" and "UIClassName" in o.obj.values:
                 o.obj.name = FancyPrinter.make_name_for_type(used_names, o.obj.values["UIClassName"].obj)
 
     @staticmethod
