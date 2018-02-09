@@ -3,7 +3,10 @@
 import sys
 import struct
 
-
+def rbyte(bytes):
+    return struct.unpack('b', bytes)[0]
+def rshort(bytes):
+    return struct.unpack("<h", bytes)[0]
 def rword(bytes):
     return struct.unpack("<i", bytes)[0]
 def rquad(bytes):
@@ -121,10 +124,10 @@ def readValues(bytes, valuesSection, debugKeys = []):
 
         value = None
         if encoding == 0x00:  # single byte
-            value = struct.unpack('b', (bytes[ptr]))[0]
+            value = rbyte((bytes[ptr]))
             ptr += 1
         elif encoding == 0x01:  # short
-            value = struct.unpack("<h", bytes[ptr: ptr + 2])[0]
+            value = rshort(bytes[ptr:ptr + 2])
             ptr += 2
         elif encoding == 0x02:  # 4 byte integer
             value = rword(bytes[ptr:ptr + 4])
@@ -149,9 +152,9 @@ def readValues(bytes, valuesSection, debugKeys = []):
             length = r[0]
             ptr += r[1]
             if length and ord(bytes[ptr]) == 0x07:  # double
-                if length == 17:
+                if length == 17: # CGPoint/CGSize
                     value = struct.unpack("<dd", bytes[ptr + 1 : ptr + 17])
-                elif length == 33:
+                elif length == 33: # CGRect
                     value = struct.unpack("<dddd", bytes[ptr + 1 : ptr + 33])
                 else:
                     raise Exception("Well this is weird.")
